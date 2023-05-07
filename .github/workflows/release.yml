@@ -1,0 +1,95 @@
+name: Release xlscc
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build xlscc and associated tools
+    runs-on:
+      labels: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          submodules: recursive
+
+      - uses: actions/cache@v3
+        with:
+          path: "~/.cache/bazel"
+          key: bazel-cache-${{ github.sha }}
+          restore-keys: bazel-cache
+
+      - name: Dependencies
+        run: sudo apt install python3-dev python-is-python3 libtinfo5  build-essential liblapack-dev libblas-dev gfortran
+
+      - name: Install bazelisk
+        run: |
+          curl -LO "https://github.com/bazelbuild/bazelisk/releases/download/v1.1.0/bazelisk-linux-amd64"
+          mkdir -p "${GITHUB_WORKSPACE}/bin/"
+          mv bazelisk-linux-amd64 "${GITHUB_WORKSPACE}/bin/bazel"
+          chmod +x "${GITHUB_WORKSPACE}/bin/bazel"
+
+      - name: Bazel build xlscc
+        working-directory: ${{github.workspace}}
+        shell: bash
+        run: |
+          cd xls
+          "${GITHUB_WORKSPACE}/bin/bazel" build //xls/contrib/xlscc
+
+      - name: Bazel build opt_main
+        working-directory: ${{github.workspace}}
+        shell: bash
+        run: |
+          cd xls
+          "${GITHUB_WORKSPACE}/bin/bazel" build //xls/tools:opt_main
+
+      - name: Bazel build booleanify_main
+        working-directory: ${{github.workspace}}
+        shell: bash
+        run: |
+          cd xls
+          "${GITHUB_WORKSPACE}/bin/bazel" build //xls/tools:booleanify_main
+
+      - name: Get xls version (hash)
+        working-directory: ${{github.workspace}}/xls
+        shell: bash
+        run: |
+          echo "VER_HASH=$(git rev-parse --short=10 HEAD)"  >> $GITHUB_ENV
+
+      - name: Prepare release directory
+        working-directory: ${{github.workspace}}
+        shell: bash
+        run: |
+          mkdir release
+          mkdir release/xlscc
+          mkdir release/tools
+
+      - name: Copy readme & license
+        working-directory: ${{github.workspace}}
+        shell: bash
+        run: |
+          cp ${GITHUB_WORKSPACE}/NOTICE ${GITHUB_WORKSPACE}/release/NOTICE
+          cp ${GITHUB_WORKSPACE}/xls/README.md ${GITHUB_WORKSPACE}/release/README.md
+          cp ${GITHUB_WORKSPACE}/xls/LICENSE ${GITHUB_WORKSPACE}/release/LICENSE
+          cp ${GITHUB_WORKSPACE}/xls/xls/AUTHORS ${GITHUB_WORKSPACE}/release/AUTHORS
+          cp ${GITHUB_WORKSPACE}/xls/xls/contrib/xlscc/README.md ${GITHUB_WORKSPACE}/release/xlscc/README.md
+
+      - name: Copy artifacts
+        working-directory: ${{github.workspace}}/xls
+        shell: bash
+        run: |
+          cp $("${GITHUB_WORKSPACE}/bin/bazel" run --run_under="echo" //xls/contrib/xlscc) ${GITHUB_WORKSPACE}/release/xlscc/
+          cp $("${GITHUB_WORKSPACE}/bin/bazel" run --run_under="echo" //xls/tools:opt_main) ${GITHUB_WORKSPACE}/release/tools/opt_main
+          cp $("${GITHUB_WORKSPACE}/bin/bazel" run --run_under="echo" //xls/tools:booleanify_main) ${GITHUB_WORKSPACE}/release/tools/booleanify_main
+
+      - name: Pack artifacts
+        working-directory: ${{github.workspace}}
+        shell: bash
+        run: |
+          tar -czvf xlscc-release.tar.gz release
+
+      - name: Release
+        uses: ncipollo/release-action@v1
+        with:
+          artifacts: ${{github.workspace}}/xlscc-release.tar.gz
+          tag: xlscc-${{ env.VER_HASH }}
+          name: xlscc-${{ env.VER_HASH }}
